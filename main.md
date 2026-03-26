@@ -278,3 +278,94 @@ ochami smd service status
 {"code":0,"message":"HSM is healthy"}
 """
 ```
+
+## Phase 2.
+```bash
+# seems to need start it manualy (or by script) after reboot cause it cannot be
+# enabled in systemd as its "transient or generated service"
+sudo systemctl start acme-deploy
+
+# libvirt i need to run manually too cause its innactive after reboot
+sudo systemctl start libvirtd
+
+# but after restarting openchami.target its not work yet
+sudo systmemctl list-dependecies openchami.target
+"""
+openchami.target
+○ ├─acme-deploy.service
+● ├─acme-register.service
+● ├─bss-init.service
+○ ├─bss.service
+○ ├─cloud-init-server.service
+● ├─coresmd-coredhcp.service
+○ ├─coresmd-coredns.service
+○ ├─haproxy.service
+○ ├─hydra-gen-jwks.service
+● ├─hydra-migrate.service
+○ ├─hydra.service
+● ├─opaal-idp.service
+● ├─opaal.service
+● ├─openchami-cert-trust.service
+● ├─postgres.service
+● ├─smd-init.service
+○ ├─smd.service
+● └─step-ca.service
+"""
+
+# in bss-init.service logs found this
+"""
+Feb 18 21:33:17 localhost.localdomain bss-init[17254]: 2026/02/18 16:33:17.314265 main.go:235: ERROR: failed to ping Postgres at postgres:5432 (attempt 3, retrying in 5 seconds): dial tcp: lookup postgres on 10.89.3.1:53: read udp 10.89.3.41:52906->10.89.3.1:53: read: no route to host
+Feb 18 21:33:17 localhost.localdomain bss-init[17238]: 2026/02/18 16:33:17.314265 main.go:235: ERROR: failed to ping Postgres at postgres:5432 (attempt 3, retrying in 5 seconds): dial tcp: lookup postgres on 10.89.3.1:53: read udp 10.89.3.41:52906->10.89.3.1:53: read: no route to host
+"""
+# its strange that service trying to find postgres at 10.89.3.1:53 cause we aren't pointed this address
+
+# the same thing in smd-init.service
+"""
+Feb 18 21:53:13 localhost.localdomain smd-init[11265]: 2026/02/18 16:53:13.670751 main.go:205: Ping failed: 'dial tcp: lookup postgres on 10.89.3.1:53: read udp 10.89.3.25:41456->10.89.3.1:53: read: no route to host'
+Feb 18 21:53:13 localhost.localdomain smd-init[11265]: 2026/02/18 16:53:13.670779 main.go:206: Retrying after 5 seconds...
+"""
+
+# the same thing in opaal.service
+"""
+Feb 18 21:20:34 localhost.localdomain systemd[1]: Started The opaal container.
+Feb 18 21:20:34 localhost.localdomain opaal[13229]: failed to fetch server config: failed to do request: Get "http://opaal-idp:3332/.well-known/openid-configuration": dial tcp: lookup opaal-idp on 10.89.0.1:53: read udp 10.89.0.13:58290->10.89.0.1:53: i/o timeout
+"""
+
+# and in hydra-migrate.service
+"""
+Feb 18 22:18:13 localhost.localdomain hydra-migrate[29731]: time=2026-02-18T17:18:13Z level=info msg=Retrying in 5.000000 seconds... audience=application error=map[message:failed to connect to `user=hydra-user database=hydradb`: hostname resolving error: lookup postgres on 10.89.3.1:53: read udp 10.89.3.75:57220->10.89.3.1:53: read: no route to host] service_name=Ory Hydra service_version=v2.3.0
+"""
+
+# i realized that its podman's nets
+# i would never (well maybe too late) suggest that problem might be in firewall
+# summary: the firewall was blocking all attempts to resolve names in this podman
+# openchami-internal.network because it wasnt present in its "trusted" list
+sudo firewall-cmd --get-active-zones
+"""
+libvirt
+  interfaces: virbr0
+libvirt-routed
+  interfaces: virbr-openchami
+public
+  interfaces: enp0s3
+trusted
+  sources: 10.88.0.0/16
+"""
+
+# to fix that we need add it there
+sudo firewall-cmd --zone=trusted --add-interface=podman4 --permanent && \
+    sudo firewall-cmd --reload
+
+# with acme-deploy.register, hydra services i see the same problem, so add to trusted
+# firewall list all the podmans network interfaces
+# after that i was able to start whole dependencies of openchami.target service
+# and start itself
+# and get valid status:
+ochami bss service status
+"""
+{"bss-status":"running"}
+"""
+```
+
+
+
