@@ -365,7 +365,271 @@ ochami bss service status
 """
 {"bss-status":"running"}
 """
+
+
+# ACTUAL START DOING PHASE 2
+# create nodes.yaml for discovery
+mkdir -p /opt/workdir/nodes
+curl -o /opt/workdir/nodes/nodes.yaml https://raw.githubusercontent.com/OpenCHAMI/tutorial-2025/refs/heads/main/Phase%202/nodes.yaml
+cat /opt/workdir/nodes/nodes.yaml  # Verify contents
+
+# regenerate demo access token, because system was reboot
+export DEMO_ACCESS_TOKEN=$(sudo bash -lc 'gen_access_token')
+
+# populate SMD with node information
+ochami discover static -f yaml -d @/opt/workdir/nodes/nodes.yaml
+
+# check it work
+"""
+danil@localhost /o/workdir> ochami smd component get | jq '.Components[] | select(.Type == "Node")'
+{
+  "Enabled": true,
+  "ID": "x1000c0s0b0n0",
+  "NID": 1,
+  "Role": "Compute",
+  "State": "On",
+  "Type": "Node"
+}
+{
+  "Enabled": true,
+  "ID": "x1000c0s0b1n0",
+  "NID": 2,
+  "Role": "Compute",
+  "State": "On",
+  "Type": "Node"
+}
+{
+  "Enabled": true,
+  "ID": "x1000c0s0b2n0",
+  "NID": 3,
+  "Role": "Compute",
+  "State": "On",
+  "Type": "Node"
+}
+{
+  "Enabled": true,
+  "ID": "x1000c0s0b3n0",
+  "NID": 4,
+  "Role": "Compute",
+  "State": "On",
+  "Type": "Node"
+}
+{
+  "Enabled": true,
+  "ID": "x1000c0s0b4n0",
+  "NID": 5,
+  "Role": "Compute",
+  "State": "On",
+  "Type": "Node"
+}
+"""
+
+
+"""
+danil@localhost /o/workdir> mkdir -p /opt/workdir/images
+danil@localhost /o/workdir> cd /opt/workdir/images
+danil@localhost /o/w/images> curl -L https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 > regctl && sudo mv regctl /usr/local/bin/regctl && sudo chmod 755 /usr/local/bin/regctl
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100 11.6M  100 11.6M    0     0  6311k      0  0:00:01  0:00:01 --:--:-- 15.5M
+[sudo] password for danil: 
+danil@localhost /o/w/images> /usr/local/bin/regctl registry set --tls disabled demo.openchami.cluster:5000
+danil@localhost /o/w/images> man regctl
+No manual entry for regctl
+danil@localhost /o/w/images [16]> cat ~/.regctl/config.json
+{
+  "hosts": {
+    "demo.openchami.cluster:5000": {
+      "tls": "disabled",
+      "hostname": "demo.openchami.cluster:5000",
+      "reqConcurrent": 3
+    }
+  }
+}
+"""
+
+# it turns out that was neccessary to install s3cmd 
+sudo dnf install -y s3cmd
+
+# create config for using s3cmd with our minio
+echo <<EOF >  ~/.s3cfg
+# Setup endpoint
+host_base = demo.openchami.cluster:9000
+host_bucket = demo.openchami.cluster:9000
+bucket_location = us-east-1
+use_https = False
+
+# Setup access keys
+access_key = admindanil
+secret_key = admindanil
+
+# Enable S3 v4 signature APIs
+signature_v2 = False
+EOF
+
+# do this
+s3cmd mb s3://efi
+s3cmd setacl s3://efi --acl-public
+s3cmd mb s3://boot-images
+s3cmd setacl s3://boot-images --acl-public
+
+# create /opt/workdir/s3-public-read-boot.json with:
+"""
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    {
+      "Effect":"Allow",
+      "Principal":"*",
+      "Action":["s3:GetObject"],
+      "Resource":["arn:aws:s3:::boot-images/*"]
+    }
+  ]
+}
+"""
+
+# create /opt/workdir/s3-public-read-efi.json with:
+"""
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    {
+      "Effect":"Allow",
+      "Principal":"*",
+      "Action":["s3:GetObject"],
+      "Resource":["arn:aws:s3:::efi/*"]
+    }
+  ]
+}
+"""
+
+s3cmd setpolicy /opt/workdir/s3-public-read-boot.json s3://boot-images \
+    --host=172.16.0.254:9000 \
+    --host-bucket=172.16.0.254:9000
+
+s3cmd setpolicy /opt/workdir/s3-public-read-efi.json s3://efi \
+    --host=172.16.0.254:9000 \
+    --host-bucket=172.16.0.254:9000
+
+# ... build base command
+
+# after starting build base image the space was wasted in 10min, so i was
+# made expand VM storage if this image
+# on my pc:
+vboxmanage modifyhd rocky9/rocky9.vdi --resize 51200
+
+# inside vm:
+sudo lvextend -l +100%FREE /dev/rl/root
+sudo xfs_growfs /
+
+
+# ... build command again:
+# craete yaml of base image /opt/workdir/images/rocky-base-9.yaml
+"""
+options:
+  layer_type: 'base'
+  name: 'rocky-base'
+  publish_tags: '9'
+  pkg_manager: 'dnf'
+  parent: 'scratch'
+  publish_registry: 'demo.openchami.cluster:5000/demo'
+  registry_opts_push:
+    - '--tls-verify=false'
+
+repos:
+  - alias: 'Rocky_9_BaseOS'
+    url: 'https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/'
+    gpg: 'https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9'
+  - alias: 'Rocky_9_AppStream'
+    url: 'https://dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/'
+    gpg: 'https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9'
+
+package_groups:
+  - 'Minimal Install'
+  - 'Development Tools'
+
+packages:
+  - chrony
+  - cloud-init
+  - dracut-live
+  - kernel
+  - rsyslog
+  - sudo
+  - wget
+
+cmds:
+  - cmd: 'dracut --add "dmsquash-live livenet network-manager" --kver $(basename /lib/modules/*) -N -f --logfile /tmp/dracut.log 2>/dev/null'
+  - cmd: 'echo DRACUT LOG:; cat /tmp/dracut.log'
+"""
+
+podman run --rm \
+    --device /dev/fuse \
+    --network host \
+    -v /opt/workdir/images/rocky-base-9.yaml:/home/builder/config.yaml \
+        ghcr.io/openchami/image-build-el9:v0.1.1 image-build \
+    --config config.yaml \
+    --log-level DEBUG
+
+# build succeded
+regctl repo ls demo.openchami.cluster:5000
+# out: demo/rocky-base
+regctl tag ls demo.openchami.cluster:5000/demo/rocky-base
+# out: 9
+
+# build compute image
+vim /opt/workdir/images/compute-base-rocky9.yaml
+"""
+options:
+  layer_type: 'base'
+  name: 'compute-base'
+  publish_tags:
+    - 'rocky9'
+  pkg_manager: 'dnf'
+  parent: 'demo.openchami.cluster:5000/demo/rocky-base:9'
+  registry_opts_pull:
+    - '--tls-verify=false'
+
+  # Publish SquashFS image to local S3
+  publish_s3: 'http://demo.openchami.cluster:9000'
+  s3_prefix: 'compute/base/'
+  s3_bucket: 'boot-images'
+
+  # Publish OCI image to container registry
+  #
+  # This is the only way to be able to re-use this image as
+  # a parent for another image layer.
+  publish_registry: 'demo.openchami.cluster:5000/demo'
+  registry_opts_push:
+    - '--tls-verify=false'
+
+repos:
+  - alias: 'Epel9'
+    url: 'https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/'
+    gpg: 'https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-9'
+
+packages:
+  - boxes
+  - cowsay
+  - figlet
+  - fortune-mod
+  - git
+  - nfs-utils
+  - tcpdump
+  - traceroute
+  - vim
+"""
+
+podman run --rm \
+    --device /dev/fuse \
+    --network host \
+    -e S3_ACCESS=admindanil \
+    -e S3_SECRET=admindanil \
+    -v /opt/workdir/images/compute-base-rocky9.yaml:/home/builder/config.yaml \
+    ghcr.io/openchami/image-build-el9:v0.1.1 image-build --config config.yaml --log-level DEBUG
+# i could not build it due to timeout of "dnf insta <packages>", its failed after check
+# all mirrors for installing
+
+
 ```
-
-
-
