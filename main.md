@@ -631,5 +631,453 @@ podman run --rm \
 # i could not build it due to timeout of "dnf insta <packages>", its failed after check
 # all mirrors for installing
 
+# i was forced to change adapter from Bridge to NAT and organize vpn tunnel for host
+# so then i finnaly builded it
+"""
+...
+-------------------BUILD LAYER--------------------
+Generating labels
+Labels: {'org.openchami.image.name': 'compute-base', 'org.openchami.image.type': 'base', 'org.openchami.image.parent': 'demo.openchami.cluster:5000/demo/rocky-base:9', 'org.openchami.image.package-manager': 'dnf', 'org.openchami.image.tags': 'rocky9', 'org.openchami.image.build-date': '2026-03-29T08:29:39.716081'}
+Publishing to S3 at boot-images
+/home/builder/.local/share/containers/storage/overlay/13eb48a3b3eb50b011e243c3aae648f97857d04c72ebe9f6adb47679bb4c651e/merged
+squashing container image
+Image Name: compute/base/rocky9.7-compute-base-rocky9
+initramfs: initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+vmlinuz: vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+Pushing /home/builder/.local/share/containers/storage/overlay/13eb48a3b3eb50b011e243c3aae648f97857d04c72ebe9f6adb47679bb4c651e/merged/boot/initramfs-5.14.0-611.41.1.el9_7.x86_64.img as efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img to boot-images
+Pushing /home/builder/.local/share/containers/storage/overlay/13eb48a3b3eb50b011e243c3aae648f97857d04c72ebe9f6adb47679bb4c651e/merged/boot/vmlinuz-5.14.0-611.41.1.el9_7.x86_64 as efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64 to boot-images
+Pushing /var/tmp/tmpmoktesht/rootfs as compute/base/rocky9.7-compute-base-rocky9 to boot-images
+Publishing to registry at demo.openchami.cluster:5000/demo
+pushing layer compute-base to demo.openchami.cluster:5000/demo/compute-base:rocky9
+"""
+
+regctl repo ls demo.openchami.cluster:5000
+"""
+demo/compute-base
+demo/rocky-base
+"""
+
+regctl tag ls demo.openchami.cluster:5000/demo/compute-base
+# out: rocky9
+
+s3cmd ls -Hr s3://boot-images | grep compute/base
+"""
+2026-03-29 08:32  1492M  s3://boot-images/compute/base/rocky9.7-compute-base-rocky9
+2026-03-29 08:32    85M  s3://boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+2026-03-29 08:32    14M  s3://boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+"""
+
+# create debug image yaml
+"""
+options:
+  layer_type: base
+  name: compute-debug
+  publish_tags:
+    - 'rocky9'
+  pkg_manager: dnf
+  parent: '172.16.0.254:5000/demo/compute-base:rocky9'
+  registry_opts_pull:
+    - '--tls-verify=false'
+
+  # Publish to local S3
+  publish_s3: 'http://172.16.0.254:9000'
+  s3_prefix: 'compute/debug/'
+  s3_bucket: 'boot-images'
+
+packages:
+  - shadow-utils
+
+cmds:
+  - cmd: "useradd -mG wheel -p 'test' testuser"
+"""
+
+podman run --rm \
+    --device /dev/fuse \
+    -e S3_ACCESS=admindanil \
+    -e S3_SECRET=admindanil \
+    -v /opt/workdir/images/compute-debug-rocky9.yaml:/home/builder/config.yaml \
+    ghcr.io/openchami/image-build-el9:v0.1.1 image-build --config config.yaml --log-level DEBUG
+
+# check success
+s3cmd ls -Hr s3://boot-images/
+"""
+2026-03-29 08:32  1492M  s3://boot-images/compute/base/rocky9.7-compute-base-rocky9
+2026-03-29 08:51  1492M  s3://boot-images/compute/debug/rocky9.7-compute-debug-rocky9
+2026-03-29 08:32    85M  s3://boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+2026-03-29 08:32    14M  s3://boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+2026-03-29 08:51    85M  s3://boot-images/efi-images/compute/debug/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+2026-03-29 08:51    14M  s3://boot-images/efi-images/compute/debug/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+"""
+
+s3cmd ls -Hr s3://boot-images | grep compute/debug
+"""
+2026-03-29 08:51  1492M  s3://boot-images/compute/debug/rocky9.7-compute-debug-rocky9
+2026-03-29 08:51    85M  s3://boot-images/efi-images/compute/debug/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+2026-03-29 08:51    14M  s3://boot-images/efi-images/compute/debug/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+"""
+
+# get actual urls
+s3cmd ls -Hr s3://boot-images | grep compute/debug | awk '{print $4}' | sed 's-s3://-http://172.16.0.254:9000/-'
+"""
+http://172.16.0.254:9000/boot-images/compute/debug/rocky9.7-compute-debug-rocky9
+http://172.16.0.254:9000/boot-images/efi-images/compute/debug/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+http://172.16.0.254:9000/boot-images/efi-images/compute/debug/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+"""
+
+# add as root file /etc/profile.d/build-image.sh
+"""
+build-image-rh9()
+{
+    if [ -z "$1" ]; then
+        echo 'Path to image config file required.' 1>&2;
+        return 1;
+    fi;
+    if [ ! -f "$1" ]; then
+        echo "$1 does not exist." 1>&2;
+        return 1;
+    fi;
+    podman run \
+            --rm \
+            --device /dev/fuse \
+            -e S3_ACCESS=admindanil \
+            -e S3_SECRET=admindanil \
+            -v "$(realpath $1)":/home/builder/config.yaml:Z \
+            ${EXTRA_PODMAN_ARGS} \
+            ghcr.io/openchami/image-build-el9:v0.1.1 \
+            image-build \
+                --config config.yaml \
+                --log-level DEBUG
+}
+
+build-image-rh8()
+{
+    if [ -z "$1" ]; then
+        echo 'Path to image config file required.' 1>&2;
+        return 1;
+    fi;
+    if [ ! -f "$1" ]; then
+        echo "$1 does not exist." 1>&2;
+        return 1;
+    fi;
+    podman run \
+           --rm \
+           --device /dev/fuse \
+           -e S3_ACCESS=admindanil \
+           -e S3_SECRET=admindanil \
+           -v "$(realpath $1)":/home/builder/config.yaml:Z \
+           ${EXTRA_PODMAN_ARGS} \
+           ghcr.io/openchami/image-build:v0.1.0 \
+           image-build \
+                --config config.yaml \
+                --log-level DEBUG
+}
+alias build-image=build-image-rh9
+"""
+
+mkdir -p /opt/workdir/cloud-init
+cd /opt/workdir/cloud-init
+ssh-keygen -t ed25519
+
+cat <<EOF | tee /opt/workdir/cloud-init/ci-defaults.yaml
+---
+base-url: "http://172.16.0.254:8081/cloud-init"
+cluster-name: "demo"
+nid-length: 3
+public-keys:
+  - "$(cat ~/.ssh/id_ed25519.pub)"
+short-name: "nid"
+EOF
+"""
+---
+base-url: "http://172.16.0.254:8081/cloud-init"
+cluster-name: "demo"
+nid-length: 3
+public-keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHd4cL2rUAfoo1RM3fPGLxswZozGOzAFcIKtBNcuFrnZ danil@localhost.localdomain"
+short-name: "nid"
+"""
+
+ochami cloud-init defaults set -f yaml -d @/opt/workdir/cloud-init/ci-defaults.yaml
+ochami cloud-init defaults get -F json-pretty
+"""
+{
+  "base-url": "http://172.16.0.254:8081/cloud-init",
+  "cluster-name": "demo",
+  "nid-length": 3,
+  "public-keys": [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHd4cL2rUAfoo1RM3fPGLxswZozGOzAFcIKtBNcuFrnZ danil@localhost.localdomain"
+  ],
+  "short-name": "nid"
+}
+"""
+
+# create /opt/workdir/cloud-init/ci-group-compute.yaml with:
+"""
+- name: compute
+  description: "compute config"
+  file:
+    encoding: plain
+    content: |
+      ## template: jinja
+      #cloud-config
+      merge_how:
+      - name: list
+        settings: [append]
+      - name: dict
+        settings: [no_replace, recurse_list]
+      users:
+        - name: root
+          ssh_authorized_keys: {{ ds.meta_data.instance_data.v1.public_keys }}
+      disable_root: false
+"""
+
+ochami cloud-init group set -f yaml -d @/opt/workdir/cloud-init/ci-group-compute.yaml
+ochami cloud-init group get config compute
+"""
+## template: jinja
+#cloud-config
+merge_how:
+- name: list
+  settings: [append]
+- name: dict
+  settings: [no_replace, recurse_list]
+users:
+  - name: root
+    ssh_authorized_keys: {{ ds.meta_data.instance_data.v1.public_keys }}
+disable_root: false
+"""
+
+ochami cloud-init group render compute x1000c0s0b0n0
+"""
+## template: jinja
+#cloud-config
+merge_how:
+- name: list
+  settings: [append]
+- name: dict
+  settings: [no_replace, recurse_list]
+users:
+  - name: root
+    ssh_authorized_keys: ['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHd4cL2rUAfoo1RM3fPGLxswZozGOzAFcIKtBNcuFrnZ danil@localhost.localdomain']
+disable_root: false
+"""
+
+ochami cloud-init node get vendor-data x1000c0s0b0n0
+"""
+#include
+http://172.16.0.254:8081/cloud-init/compute.yaml
+"""
+
+ochami cloud-init node get meta-data x1000c0s0b0n0 -F yaml
+"""
+- cluster-name: demo
+  hostname: nid001
+  instance-id: i-fd5c29bc
+  instance_data:
+    v1:
+        instance_id: i-fd5c29bc
+        local_ipv4: 172.16.0.1
+        public_keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHd4cL2rUAfoo1RM3fPGLxswZozGOzAFcIKtBNcuFrnZ danil@localhost.localdomain
+        vendor_data:
+            cloud_init_base_url: http://172.16.0.254:8081/cloud-init
+            cluster_name: demo
+            groups:
+                compute:
+                    Description: compute config
+            version: "1.0"
+  local-hostname: nid001
+"""
+
+s3cmd ls -Hr s3://boot-images/ | awk '{print $4}' | grep base
+"""
+s3://boot-images/compute/base/rocky9.7-compute-base-rocky9
+s3://boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+s3://boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+"""
+
+mkdir -p /opt/workdir/boot
+
+URIS=$(s3cmd ls -Hr s3://boot-images | grep compute/base | awk '{print $4}' | sed 's-s3://-http://172.16.0.254:9000/-' | xargs)
+URI_IMG=$(echo "$URIS" | cut -d' ' -f1)
+URI_INITRAMFS=$(echo "$URIS" | cut -d' ' -f2)
+URI_KERNEL=$(echo "$URIS" | cut -d' ' -f3)
+cat <<EOF | tee /opt/workdir/boot/boot-compute-base.yaml
+---
+kernel: '${URI_KERNEL}'
+initrd: '${URI_INITRAMFS}'
+params: 'nomodeset ro root=live:${URI_IMG} ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init'
+macs:
+  - 52:54:00:be:ef:01
+  - 52:54:00:be:ef:02
+  - 52:54:00:be:ef:03
+  - 52:54:00:be:ef:04
+  - 52:54:00:be:ef:05
+EOF
+"""
+---
+kernel: 'http://172.16.0.254:9000/boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64'
+initrd: 'http://172.16.0.254:9000/boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img'
+params: 'nomodeset ro root=live:http://172.16.0.254:9000/boot-images/compute/base/rocky9.7-compute-base-rocky9 ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init'
+macs:
+  - 52:54:00:be:ef:01
+  - 52:54:00:be:ef:02
+  - 52:54:00:be:ef:03
+  - 52:54:00:be:ef:04
+  - 52:54:00:be:ef:05
+"""
+
+ochami bss boot params set -f yaml -d @/opt/workdir/boot/boot-compute-base.yaml
+
+ochami bss boot params get -F yaml
+"""
+- cloud-init:
+    meta-data: null
+    phone-home:
+        fqdn: ""
+        hostname: ""
+        instance_id: ""
+        pub_key_dsa: ""
+        pub_key_ecdsa: ""
+        pub_key_rsa: ""
+    user-data: null
+  initrd: http://172.16.0.254:9000/boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+  kernel: http://172.16.0.254:9000/boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+  macs:
+    - 52:54:00:be:ef:01
+    - 52:54:00:be:ef:02
+    - 52:54:00:be:ef:03
+    - 52:54:00:be:ef:04
+    - 52:54:00:be:ef:05
+  params: nomodeset ro root=live:http://172.16.0.254:9000/boot-images/compute/base/rocky9.7-compute-base-rocky9 ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init
+"""
+
+# yes, boot parameters contains base image, but command in tutorial wrong, it should be:
+ochami bss boot params get | jq
+"""
+[
+  {
+    "cloud-init": {
+      "meta-data": null,
+      "phone-home": {
+        "fqdn": "",
+        "hostname": "",
+        "instance_id": "",
+        "pub_key_dsa": "",
+        "pub_key_ecdsa": "",
+        "pub_key_rsa": ""
+      },
+      "user-data": null
+    },
+    "initrd": "http://172.16.0.254:9000/boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img",
+    "kernel": "http://172.16.0.254:9000/boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64",
+    "macs": [
+      "52:54:00:be:ef:01",
+      "52:54:00:be:ef:02",
+      "52:54:00:be:ef:03",
+      "52:54:00:be:ef:04",
+      "52:54:00:be:ef:05"
+    ],
+    "params": "nomodeset ro root=live:http://172.16.0.254:9000/boot-images/compute/base/rocky9.7-compute-base-rocky9 ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init"
+  }
+]
+"""
+
+sudo virsh destroy compute1
+# out: error: failed to get domain 'compute1'
+
+virt-install
+"""
+WARNING  KVM acceleration not available, using 'qemu'
+ERROR    
+--os-variant/--osinfo OS name is required, but no value was
+set or detected.
+
+This is now a fatal error. Specifying an OS name is required
+for modern, performant, and secure virtual machine defaults.
+
+You can see a full list of possible OS name values with:
+
+   virt-install --osinfo list
+
+If your Linux distro is not listed, try one of generic values
+such as: linux2024, linux2022, linux2020, linux2018, linux2016
+
+If you just need to get the old behavior back, you can use:
+
+  --osinfo detect=on,require=off
+
+Or export VIRTINSTALL_OSINFO_DISABLE_REQUIRE=1
+"""
+
+# and i rialize i skiped whole 2.6 )))))))))))))))
+
+URIS=$(s3cmd ls -Hr s3://boot-images | grep compute/debug | awk '{print $4}' | sed 's-s3://-http://172.16.0.254:9000/-' | xargs) 
+URI_IMG=$(echo "$URIS" | cut -d' ' -f1)
+URI_INITRAMFS=$(echo "$URIS" | cut -d' ' -f2)
+URI_KERNEL=$(echo "$URIS" | cut -d' ' -f3)
+cat <<EOF | tee /opt/workdir/boot/boot-compute-debug.yaml
+---
+kernel: '${URI_KERNEL}'
+initrd: '${URI_INITRAMFS}'
+params: 'nomodeset ro root=live:${URI_IMG} ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init'
+macs:
+  - 52:54:00:be:ef:01
+  - 52:54:00:be:ef:02
+  - 52:54:00:be:ef:03
+  - 52:54:00:be:ef:04
+  - 52:54:00:be:ef:05
+EOF
+"""
+---
+kernel: 'http://172.16.0.254:9000/boot-images/efi-images/compute/debug/vmlinuz-5.14.0-611.41.1.el9_7.x86_64'
+initrd: 'http://172.16.0.254:9000/boot-images/efi-images/compute/debug/initramfs-5.14.0-611.41.1.el9_7.x86_64.img'
+params: 'nomodeset ro root=live:http://172.16.0.254:9000/boot-images/compute/debug/rocky9.7-compute-debug-rocky9 ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init'
+macs:
+  - 52:54:00:be:ef:01
+  - 52:54:00:be:ef:02
+  - 52:54:00:be:ef:03
+  - 52:54:00:be:ef:04
+  - 52:54:00:be:ef:05
+"""
+
+ochami bss boot params get -F yaml
+"""
+- cloud-init:
+    meta-data: null
+    phone-home:
+        fqdn: ""
+        hostname: ""
+        instance_id: ""
+        pub_key_dsa: ""
+        pub_key_ecdsa: ""
+        pub_key_rsa: ""
+    user-data: null
+  initrd: http://172.16.0.254:9000/boot-images/efi-images/compute/debug/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+  kernel: http://172.16.0.254:9000/boot-images/efi-images/compute/debug/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+  macs:
+    - 52:54:00:be:ef:01
+    - 52:54:00:be:ef:02
+    - 52:54:00:be:ef:03
+    - 52:54:00:be:ef:04
+    - 52:54:00:be:ef:05
+  params: nomodeset ro root=live:http://172.16.0.254:9000/boot-images/compute/debug/rocky9.7-compute-debug-rocky9 ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init
+"""
+
+sudo virt-install \
+   --name compute1 \
+   --memory 4096 \
+   --vcpus 1 \
+   --disk none \
+   --pxe \
+   --os-variant centos-stream9 \
+   --network network=openchami-net,model=virtio,mac=52:54:00:be:ef:01 \
+   --graphics none \
+   --console pty,target_type=serial \
+   --boot network,hd \
+   --boot loader=/usr/share/OVMF/OVMF_CODE.secboot.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/OVMF/OVMF_VARS.fd,loader_secure=no \
+   --virt-type kvm
+# out: ERROR    Host does not support domain type kvm for virtualization type 'hvm' with architecture 'x86_64'
+# i dont have "nested virtualization" on this vm...
 
 ```
