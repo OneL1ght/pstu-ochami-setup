@@ -1080,4 +1080,313 @@ sudo virt-install \
 # out: ERROR    Host does not support domain type kvm for virtualization type 'hvm' with architecture 'x86_64'
 # i dont have "nested virtualization" on this vm...
 
+# i enabled nested VM on this virtualbox machine
+# and got inside debug VM in virtualbox vm)
+"""
+[testuser@nid0001 ~]$ findmnt /
+TARGET SOURCE        FSTYPE  OPTIONS
+/      LiveOS_rootfs overlay rw,relatime,lowerdir=/run/rootfsbase,upperdir=/run/
+"""
+# played around a bit (as recommend in tutorial) and closed it
+"""
+[testuser@nid0001 ~]$ gcc --version
+gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-11)
+Copyright (C) 2021 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE
+"""
+
+
+# check this again
+ochami cloud-init node get vendor-data x1000c0s0b0n0
+"""
+#include
+http://172.16.0.254:8081/cloud-init/compute.yaml
+"""
+
+ochami cloud-init node get meta-data x1000c0s0b0n0 -F yaml
+"""
+- cluster-name: demo
+  hostname: nid001
+  instance-id: i-fd5c29bc
+  instance_data:
+    v1:
+        instance_id: i-fd5c29bc
+        local_ipv4: 172.16.0.1
+        public_keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHd4cL2rUAfoo1RM3fPGLxswZozGOzAFcIKtBNcuFrnZ danil@localhost.localdomain
+        vendor_data:
+            cloud_init_base_url: http://172.16.0.254:8081/cloud-init
+            cluster_name: demo
+            groups:
+                compute:
+                    Description: compute config
+            version: "1.0"
+  local-hostname: nid001
+"""
+
+s3cmd ls -Hr s3://boot-images/ | awk '{print $4}' | grep base
+# what i see
+"""
+s3://boot-images/compute/base/rocky9.7-compute-base-rocky9
+s3://boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+s3://boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+"""
+
+# create boot compute yaml
+URIS=$(s3cmd ls -Hr s3://boot-images | grep compute/base | awk '{print $4}' | sed 's-s3://-http://172.16.0.254:9000/-' | xargs)
+URI_IMG=$(echo "$URIS" | cut -d' ' -f1)
+URI_INITRAMFS=$(echo "$URIS" | cut -d' ' -f2)
+URI_KERNEL=$(echo "$URIS" | cut -d' ' -f3)
+cat <<EOF | tee /opt/workdir/boot/boot-compute-base.yaml
+---
+kernel: '${URI_KERNEL}'
+initrd: '${URI_INITRAMFS}'
+params: 'nomodeset ro root=live:${URI_IMG} ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init'
+macs:
+  - 52:54:00:be:ef:01
+  - 52:54:00:be:ef:02
+  - 52:54:00:be:ef:03
+  - 52:54:00:be:ef:04
+  - 52:54:00:be:ef:05
+EOF
+
+ochami bss boot params set -f yaml -d @/opt/workdir/boot/boot-compute-base.yaml
+ochami bss boot params get -F yaml
+"""
+- cloud-init:
+    meta-data: null
+    phone-home:
+        fqdn: ""
+        hostname: ""
+        instance_id: ""
+        pub_key_dsa: ""
+        pub_key_ecdsa: ""
+        pub_key_rsa: ""
+    user-data: null
+  initrd: http://172.16.0.254:9000/boot-images/efi-images/compute/base/initramfs-5.14.0-611.41.1.el9_7.x86_64.img
+  kernel: http://172.16.0.254:9000/boot-images/efi-images/compute/base/vmlinuz-5.14.0-611.41.1.el9_7.x86_64
+  macs:
+    - 52:54:00:be:ef:01
+    - 52:54:00:be:ef:02
+    - 52:54:00:be:ef:03
+    - 52:54:00:be:ef:04
+    - 52:54:00:be:ef:05
+  params: nomodeset ro root=live:http://172.16.0.254:9000/boot-images/compute/base/rocky9.7-compute-base-rocky9 ip=dhcp overlayroot=tmpfs overlayroot_cfgdisk=disabled apparmor=0 selinux=0 console=ttyS0,115200 ip6=off cloud-init=enabled ds=nocloud-net;s=http://172.16.0.254:8081/cloud-init
+"""
+
+sudo virsh destroy compute1 && sudo virsh start --console compute1
+
+ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no root@172.16.0.1
+# could not connnect due to this error in cloud-init i guess...
+# and ssh server wont be up
+"""
+         Starting Network Manager Script Dispatcher Service...
+[  OK  ] Started Network Manager Script Dispatcher Service.
+[   57.212603] cloud-init[1055]: 2026-04-02 16:04:15,875 - main.py[ERROR]: failed stage init
+[   57.220327] cloud-init[1055]: Traceback (most recent call last):
+[   57.228505] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 169, in _new_conn
+[   57.238029] cloud-init[1055]:     conn = connection.create_connection(
+[   57.243985] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/util/connection.py", line 73, in create_connection
+[   57.254205] cloud-init[1055]:     for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+[   57.262634] cloud-init[1055]:   File "/usr/lib64/python3.9/socket.py", line 966, in getaddrinfo
+[   57.271163] cloud-init[1055]:     for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+[   57.277820] cloud-init[1055]: socket.gaierror: [Errno -2] Name or service not known
+[   57.285189] cloud-init[1055]: During handling of the above exception, another exception occurred:
+[   57.293703] cloud-init[1055]: Traceback (most recent call last):
+[   57.299371] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connectionpool.py", line 700, in urlopen
+[   57.318730] cloud-init[1055]:     httplib_response = self._make_request(
+[   57.320559] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connectionpool.py", line 395, in _make_request
+[   57.323447] cloud-init[1055]:     conn.request(method, url, **httplib_request_kw)
+[   57.325484] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 234, in request
+[   57.328240] cloud-init[1055]:     super(HTTPConnection, self).request(method, url, body=body, headers=headers)
+[   57.333743] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1285, in request
+[   57.344497] cloud-init[1055]:     self._send_request(method, url, body, headers, encode_chunked)
+[   57.362873] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1331, in _send_request
+[   57.367350] cloud-init[1055]:     self.endheaders(body, encode_chunked=encode_chunked)
+[   57.369355] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1280, in endheaders
+[   57.371592] cloud-init[1055]:     self._send_output(message_body, encode_chunked=encode_chunked)
+[   57.373776] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1040, in _send_output
+[   57.376137] cloud-init[1055]:     self.send(msg)
+[   57.377446] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 980, in send
+[   57.385646] cloud-init[1055]:     self.connect()
+[   57.389632] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 200, in connect
+[   57.398054] cloud-init[1055]:     conn = self._new_conn()
+[   57.415107] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 181, in _new_conn
+[   57.418082] cloud-init[1055]:     raise NewConnectionError(
+[   57.419681] cloud-init[1055]: urllib3.exceptions.NewConnectionError: <urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known
+[   57.423925] cloud-init[1055]: During handling of the above exception, another exception occurred:
+[   57.426192] cloud-init[1055]: Traceback (most recent call last):
+[   57.433157] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/adapters.py", line 612, in send
+[   57.438795] cloud-init[1055]:     resp = conn.urlopen(
+[   57.445145] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connectionpool.py", line 756, in urlopen
+[   57.466273] cloud-init[1055]:     retries = retries.increment(
+[   57.467980] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/util/retry.py", line 576, in increment
+[   57.470728] cloud-init[1055]:     raise MaxRetryError(_pool, url, error or ResponseError(cause))
+[   57.473017] cloud-init[1055]: urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known'))
+[   57.487349] cloud-init[1055]: During handling of the above exception, another exception occurred:
+[   57.494374] cloud-init[1055]: Traceback (most recent call last):
+[   57.499212] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/url_helper.py", line 484, in readurl
+[   57.517774] cloud-init[1055]:     r = session.request(**req_args)
+[   57.519525] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/sessions.py", line 544, in request
+[   57.522323] cloud-init[1055]:     resp = self.send(prep, **send_kwargs)
+[   57.524286] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/sessions.py", line 657, in send
+[   57.526981] cloud-init[1055]:     r = adapter.send(request, **kwargs)
+[   57.533587] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/adapters.py", line 689, in send
+[   57.539436] cloud-init[1055]:     raise ConnectionError(e, request=request)
+[   57.545957] cloud-init[1055]: requests.exceptions.ConnectionError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known'))
+[   57.570778] cloud-init[1055]: The above exception was the direct cause of the following exception:
+[   57.573275] cloud-init[1055]: Traceback (most recent call last):
+[   57.575011] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 237, in _do_include
+[   57.577685] cloud-init[1055]:     resp = read_file_or_url(
+[   57.584513] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/url_helper.py", line 254, in read_file_or_url
+[   57.592919] cloud-init[1055]:     return readurl(url, **kwargs)
+[   57.597135] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/url_helper.py", line 528, in readurl
+[   57.616480] cloud-init[1055]:     raise url_error from e
+[   57.617931] cloud-init[1055]: cloudinit.url_helper.UrlError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known'))
+[   57.624709] cloud-init[1055]: The above exception was the direct cause of the following exception:
+[   57.627940] cloud-init[1055]: Traceback (most recent call last):
+[   57.635187] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/cmd/main.py", line 922, in status_wrapper
+[   57.643558] cloud-init[1055]:     ret = functor(name, args)
+[   57.648618] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/cmd/main.py", line 589, in main_init
+[   57.667655] cloud-init[1055]:     init.update()
+[   57.669000] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/stages.py", line 575, in update
+[   57.671672] cloud-init[1055]:     self.datasource.get_vendordata(), "vendordata"
+[   57.673664] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/sources/__init__.py", line 657, in get_vendordata
+[   57.676602] cloud-init[1055]:     self.vendordata = self.ud_proc.process(self.get_vendordata_raw())
+[   57.680401] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 87, in process
+[   57.688474] cloud-init[1055]:     self._process_msg(convert_string(blob), accumulating_msg)
+[   57.695593] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 158, in _process_msg
+[   57.716422] cloud-init[1055]:     self._do_include(payload, append_msg)
+[   57.718246] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 263, in _do_include
+[   57.721066] cloud-init[1055]:     _handle_error(message, urle)
+[   57.722881] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 71, in _handle_error
+[   57.726824] cloud-init[1055]:     raise RuntimeError(error_message) from source_exception
+[   57.735635] cloud-init[1055]: RuntimeError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known')) for url: http://cloud-init:27777/compute.yaml
+[   57.759852] cloud-init[1055]: failed run of stage init
+[   57.764481] cloud-init[1055]: ------------------------------------------------------------
+[   57.782725] cloud-init[1055]: Traceback (most recent call last):
+[   57.784330] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 169, in _new_conn
+[   57.787008] cloud-init[1055]:     conn = connection.create_connection(
+[   57.788858] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/util/connection.py", line 73, in create_connection
+[   57.791700] cloud-init[1055]:     for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+[   57.795352] cloud-init[1055]:   File "/usr/lib64/python3.9/socket.py", line 966, in getaddrinfo
+[   57.803468] cloud-init[1055]:     for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+[   57.810339] cloud-init[1055]: socket.gaierror: [Errno -2] Name or service not known
+[   57.816910] cloud-init[1055]: During handling of the above exception, another exception occurred:
+[   57.828161] cloud-init[1055]: Traceback (most recent call last):
+[   57.829918] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connectionpool.py", line 700, in urlopen
+[   57.837491] cloud-init[1055]:     httplib_response = self._make_request(
+[   57.845716] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connectionpool.py", line 395, in _make_request
+[   57.853730] cloud-init[1055]:     conn.request(method, url, **httplib_request_kw)
+[   57.869168] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 234, in request
+[   57.873906] cloud-init[1055]:     super(HTTPConnection, self).request(method, url, body=body, headers=headers)
+[   57.877292] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1285, in request
+[   57.881003] cloud-init[1055]:     self._send_request(method, url, body, headers, encode_chunked)
+[   57.889496] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1331, in _send_request
+[   57.899214] cloud-init[1055]:     self.endheaders(body, encode_chunked=encode_chunked)
+[   57.907161] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1280, in endheaders
+[   57.919319] cloud-init[1055]:     self._send_output(message_body, encode_chunked=encode_chunked)
+[   57.923734] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 1040, in _send_output
+[   57.933038] cloud-init[1055]:     self.send(msg)
+[   57.937368] cloud-init[1055]:   File "/usr/lib64/python3.9/http/client.py", line 980, in send
+[   57.944880] cloud-init[1055]:     self.connect()
+[   57.948647] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 200, in connect
+[   57.971171] cloud-init[1055]:     conn = self._new_conn()
+[   57.974653] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connection.py", line 181, in _new_conn
+[   57.977580] cloud-init[1055]:     raise NewConnectionError(
+[   57.979089] cloud-init[1055]: urllib3.exceptions.NewConnectionError: <urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known
+[   57.983488] cloud-init[1055]: During handling of the above exception, another exception occurred:
+[   57.986264] cloud-init[1055]: Traceback (most recent call last):
+[   57.993357] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/adapters.py", line 612, in send
+[   57.998528] cloud-init[1055]:     resp = conn.urlopen(
+[   58.003447] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/connectionpool.py", line 756, in urlopen
+[   58.024263] cloud-init[1055]:     retries = retries.increment(
+[   58.025852] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/urllib3/util/retry.py", line 576, in increment
+[   58.028553] cloud-init[1055]:     raise MaxRetryError(_pool, url, error or ResponseError(cause))
+[   58.030833] cloud-init[1055]: urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known'))
+[   58.042591] cloud-init[1055]: During handling of the above exception, another exception occurred:
+[   58.049586] cloud-init[1055]: Traceback (most recent call last):
+[   58.054297] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/url_helper.py", line 484, in readurl
+[   58.062386] cloud-init[1055]:     r = session.request(**req_args)
+[   58.067089] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/sessions.py", line 544, in request
+[   58.081034] cloud-init[1055]:     resp = self.send(prep, **send_kwargs)
+[   58.087251] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/sessions.py", line 657, in send
+[   58.107105] cloud-init[1055]:     r = adapter.send(request, **kwargs)
+[   58.108800] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/requests/adapters.py", line 689, in send
+[   58.111374] cloud-init[1055]:     raise ConnectionError(e, request=request)
+[   58.113476] cloud-init[1055]: requests.exceptions.ConnectionError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known'))
+[   58.128338] cloud-init[1055]: The above exception was the direct cause of the following exception:
+[   58.135343] cloud-init[1055]: Traceback (most recent call last):
+[   58.154252] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 237, in _do_include
+[   58.158325] cloud-init[1055]:     resp = read_file_or_url(
+[   58.159860] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/url_helper.py", line 254, in read_file_or_url
+[   58.162900] cloud-init[1055]:     return readurl(url, **kwargs)
+[   58.165882] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/url_helper.py", line 528, in readurl
+[   58.170705] cloud-init[1055]:     raise url_error from e
+[   58.177138] cloud-init[1055]: cloudinit.url_helper.UrlError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known'))
+[   58.206663] cloud-init[1055]: The above exception was the direct cause of the following exception:
+[   58.209042] cloud-init[1055]: Traceback (most recent call last):
+[   58.210742] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/cmd/main.py", line 922, in status_wrapper
+[   58.213793] cloud-init[1055]:     ret = functor(name, args)
+[   58.215434] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/cmd/main.py", line 589, in main_init
+[   58.224159] cloud-init[1055]:     init.update()
+[   58.226857] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/stages.py", line 575, in update
+[   58.234746] cloud-init[1055]:     self.datasource.get_vendordata(), "vendordata"
+[   58.253660] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/sources/__init__.py", line 657, in get_vendordata
+[   58.256856] cloud-init[1055]:     self.vendordata = self.ud_proc.process(self.get_vendordata_raw())
+[   58.259253] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 87, in process
+[   58.261918] cloud-init[1055]:     self._process_msg(convert_string(blob), accumulating_msg)
+[   58.264056] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 158, in _process_msg
+[   58.272661] cloud-init[1055]:     self._do_include(payload, append_msg)
+[   58.276737] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 263, in _do_include
+[   58.299817] cloud-init[1055]:     _handle_error(message, urle)
+[   58.303653] cloud-init[1055]:   File "/usr/lib/python3.9/site-packages/cloudinit/user_data.py", line 71, in _handle_error
+[   58.306573] cloud-init[1055]:     raise RuntimeError(error_message) from source_exception
+[   58.308929] cloud-init[1055]: RuntimeError: HTTPConnectionPool(host='cloud-init', port=27777): Max retries exceeded with url: /compute.yaml (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f9ce3d20640>: Failed to establish a new connection: [Errno -2] Name or service not known')) for url: http://cloud-init:27777/compute.yaml
+[   58.323648] cloud-init[1055]: ------------------------------------------------------------
+[FAILED] Failed to start Cloud-init: Network Stage.
+See 'systemctl status cloud-init.service' for details.
+[  OK  ] Reached target Cloud-config availability.
+[  OK  ] Reached target Network is Online.
+         Starting Cloud-init: Config Stage...
+         Starting Crash recovery kernel arming...
+         Starting Notify NFS peers of a restart...
+         Starting System Logging Service...
+         Starting OpenSSH server daemon...
+         Starting Permit User Sessions...
+[  OK  ] Started Notify NFS peers of a restart.
+[  OK  ] Finished Permit User Sessions.
+[  OK  ] Started Command Scheduler.
+[  OK  ] Started Getty on tty1.
+[  OK  ] Started Serial Getty on ttyS0.
+[  OK  ] Reached target Login Prompts.
+[FAILED] Failed to start OpenSSH server daemon.
+See 'systemctl status sshd.service' for details.
+[  OK  ] Started System Logging Service.
+[  OK  ] Reached target Multi-User System.
+[  OK  ] Reached target Graphical Interface.
+         Starting Record Runlevel Change in UTMP...
+[  OK  ] Finished Record Runlevel Change in UTMP.
+[   59.007321] cloud-init[1137]: Cloud-init v. 24.4-7.el9_7.1.rocky.0.1 running 'modules:config' at Thu, 02 Apr 2026 16:04:17 +0000. Up 58.98 seconds.
+[  OK  ] Finished Cloud-init: Config Stage.
+         Starting Cloud-init: Final Stage...
+[   59.311937] cloud-init[1141]: Cloud-init v. 24.4-7.el9_7.1.rocky.0.1 running 'modules:final' at Thu, 02 Apr 2026 16:04:17 +0000. Up 59.28 seconds.
+[   59.348883] cloud-init[1141]: 2026-04-02 16:04:18,024 - log_util.py[WARNING]: Running module ssh_authkey_fingerprints (<module 'cloudinit.config.cc_ssh_authkey_fingerprints' from '/usr/lib/python3.9/site-packages/cloudinit/config/cc_ssh_authkey_fingerprints.py'>) failed
+
+[   59.387904] cloud-init[1141]: Cloud-init v. 24.4-7.el9_7.1.rocky.0.1 finished at Thu, 02 Apr 2026 16:04:18 +0000. Datasource DataSourceNoCloudNet [seed=cmdline,http://172.16.0.254:8081/cloud-init].  Up 59.38 seconds
+[FAILED] Failed to start Cloud-init: Final Stage.
+See 'systemctl status cloud-final.service' for details.
+[  OK  ] Reached target Cloud-init target.
+"""
+
+# next time try:
+ochami cloud-init defaults get -F json-pretty
+# if empty see step 2.7 and probably do this: 
+# do export DEMO_TOKEN.... and
+ochami cloud-init defaults set -f yaml -d @/opt/workdir/cloud-init/ci-defaults.yaml
+
+# then try again up compute vm
+
 ```
+
