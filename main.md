@@ -1380,13 +1380,17 @@ See 'systemctl status cloud-final.service' for details.
 [  OK  ] Reached target Cloud-init target.
 """
 
-# next time try:
-ochami cloud-init defaults get -F json-pretty
-# if empty see step 2.7 and probably do this: 
-# do export DEMO_TOKEN.... and
-ochami cloud-init defaults set -f yaml -d @/opt/workdir/cloud-init/ci-defaults.yaml
 
-# then try again up compute vm
+# on next iteration of doing phase 2 i check this at the beginning:
+ochami cloud-init defaults get -F json-pretty
+# it was an empty, i did all steps from 2.7 (withs `export DEMO_TOKEN....`): 
+# and then again up compute vm, and success, i get access to compute node with
+# root over ssh from different terminal session:
+"""
+danil@localhost /o/w/cloud-init> ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no root@172.16.0.1
+Warning: Permanently added '172.16.0.1' (ED25519) to the list of known hosts.
+[root@nid001 ~]# 
+"""
 
 ```
 
